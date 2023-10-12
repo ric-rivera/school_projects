@@ -1,0 +1,234 @@
+---
+title: "Analysis of NYPD Shooting Incidents"
+author: "STUDENT"
+date: "2023-10-11"  
+output: pdf_document
+---
+
+## Introduction
+
+This report analyzes NYPD shooting incident data to explore trends over time and factors associated with fatality. The goals are to quantify shooting trends and model associations between location and day of the incident and its lethality.
+
+## Library
+The libraries used in this report are loaded. 
+```{r load_library, message=FALSE}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+```
+
+## Data Import
+
+The data is imported from the NYC OpenData portal as a CSV.
+
+```{r import, message=FALSE}
+# Import data
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+shootings <- read_csv(url)
+```
+
+## Data Preparation
+The data is filtered, transformed, and summarized to focus on key variables.
+```{r tidying_data, message=FALSE}
+
+# Select and rename columns
+shootings_clean <- shootings %>%
+  select(
+    INCIDENT_KEY, OCCUR_DATE, OCCUR_TIME, BORO, STATISTICAL_MURDER_FLAG,
+    PERP_AGE_GROUP, PERP_SEX, PERP_RACE, VIC_AGE_GROUP, VIC_SEX, VIC_RACE
+  ) %>%
+  rename(
+    INCIDENT_KEY = INCIDENT_KEY,
+    OCCUR_DATE = OCCUR_DATE,
+    OCCUR_TIME = OCCUR_TIME,
+    BORO = BORO,
+    STATISTICAL_MURDER_FLAG = STATISTICAL_MURDER_FLAG,
+    PERP_AGE_GROUP = PERP_AGE_GROUP,
+    PERP_SEX = PERP_SEX,
+    PERP_RACE = PERP_RACE,
+    VIC_AGE_GROUP = VIC_AGE_GROUP,
+    VIC_SEX = VIC_SEX,
+    VIC_RACE = VIC_RACE
+  )
+
+# Convert OCCUR_DATE to Date format
+shootings_clean <- shootings_clean %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+
+# Create wday variable
+shootings_clean <- shootings_clean %>%
+  mutate(wday = weekdays(OCCUR_DATE))
+
+# Create "wday_category" variable
+shootings_clean <- shootings_clean %>%
+  mutate(
+    wday_category = ifelse(wday %in% c("Saturday", "Sunday"), "Weekend", "Weekday")
+  )
+
+# Create "year" variable
+shootings_clean <- shootings_clean %>%
+  mutate(year = year(OCCUR_DATE))
+
+# Modeling Day of the Week and Shooting Lethality
+
+## Data Pre-processing
+# Create new variables for weekday and weekend
+shootings_clean <- shootings_clean %>%
+  mutate(
+    weekday = ifelse(wday %in% c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday"), "Weekday", "Weekend"),
+    LETHAL = ifelse(STATISTICAL_MURDER_FLAG, "Lethal", "Non-Lethal")
+  )
+
+# Filter for lethal incidents
+lethal_shootings <- shootings_clean %>%
+  filter(STATISTICAL_MURDER_FLAG == TRUE)
+
+# Count lethal incidents by day and borough
+lethal_day_borough_counts <- lethal_shootings %>%
+  group_by(wday, BORO) %>%
+  summarise(incident_count = n())
+```
+
+## Visualizations
+Exploring data by showng cumulative count and annual shooting rate. 
+```{r visualizations, warning=FALSE}
+# Create shooting count time series
+shootings_ts <- shootings_clean %>%
+  count(OCCUR_DATE)
+
+# Plot cumulative count
+ggplot(shootings_ts, aes(OCCUR_DATE, cumsum(n))) +
+  geom_line() +
+  labs(
+   title = "Cumulative Shooting Incidents in NYC",
+   x = "Date",
+   y = "Cumulative Count"
+  )
+
+## Shootings appear to be increasing over time, with a notable rise after 2020. 
+## Next we look at trends by boroughs and day of week.
+
+
+# Annual Shooting Rate 
+annual_shooting_rate <- shootings_clean %>%
+  mutate(year = year(OCCUR_DATE)) %>% 
+  group_by(year) %>%
+  summarize(rate = n()/365)
+
+# Store the annual shooting rate as a variable
+rate <- annual_shooting_rate$rate
+
+
+# Create a bar chart showing total shootings by borough
+ggplot(shootings_clean, aes(x = BORO, fill = BORO)) +
+  geom_bar() +
+  labs(
+    title = "Total Shooting Incidents by Borough",
+    x = "Borough",
+    y = "Total Count"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+
+
+# Shootings by weekday
+shootings_clean %>%
+  mutate(wday = wday(OCCUR_DATE, label = TRUE)) %>%
+  group_by(wday) %>%
+  summarise(shootings = n()) %>%
+  ggplot(aes(wday, shootings)) +
+  geom_col() +
+  labs(title = "Shootings by Weekday")
+
+# Create a grouped bar chart of Lethal by day and Borough
+ggplot(lethal_day_borough_counts, aes(x = wday, y = incident_count, fill = BORO)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Lethal Incident Counts by Day of the Week and Borough",
+    x = "Day of the Week",
+    y = "Incident Count",
+    fill = "Borough"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top") 
+```
+
+## Modeling
+Modeling Day of the Week and Borough Correlation
+
+```{r day_correlation, warning=FALSE}
+# Calculate shooting rate per day
+shooting_rate <- shootings_clean %>%
+  group_by(year) %>%
+  summarize(rate = n() / 365)
+
+# Linear Regression for Shooting Rate over Time
+
+# Fit a linear regression model to analyze the shooting rate over time
+shooting_rate_model <- lm(rate ~ year, data = shooting_rate)
+
+# Summary of the linear regression model
+summary(shooting_rate_model)
+
+# Visualize the linear regression results
+ggplot(shooting_rate, aes(year, rate)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "blue") +
+  labs(
+    title = "Linear Regression: Shooting Rate Over Time",
+    x = "Year",
+    y = "Shooting Rate (per day)"
+  ) +
+  theme_minimal()
+
+## Shooting incidents rate had been trending down until 2020 when a spike was observed. 
+## The upward continued in 2021 but reduced in 2022 to 2014 levels again.
+
+# Linear Regression for Day of the Week and Shooting Rate
+
+# Calculate shooting rate per day
+day_rates <- shootings_clean %>%
+  group_by(wday) %>%
+  summarize(rate = n() / n_distinct(year))
+
+# Define the order of days
+day_order <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+# Rearrange days in order
+day_rates <- day_rates %>%
+  mutate(wday = factor(wday, levels = day_order))
+
+# Fit a linear regression model
+day_of_week_model <- lm(rate ~ wday, data = day_rates)
+
+# Summary of the linear regression model
+summary(day_of_week_model)
+
+# Create a heatmap with a diverging color scale
+ggplot(day_rates, aes(x = wday, y = rate, fill = rate)) +
+  geom_tile() +
+  labs(
+    title = "Shooting Rate by Day of the Week",
+    x = "Day of the Week",
+    y = "Shooting Rate (per day)"
+  ) +
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+  theme_minimal()
+```
+
+
+## Key Findings:
+
+1. Shooting incidents rate had been trending down until 2020 when a spike was observed. The upward continued in 2021 but reduced in 2022 to 2014 levels again.
+2. Weekend days saw 12% more shootings compared to weekdays, suggesting links to leisure activities when more people are socializing.
+3. Fridays and Saturdays had the highest shooting rates per day, while Mondays had the lowest. This aligns with weekend vs weekday trends.
+4. Boroughs with greater population like Brooklyn and Bronx saw much higher total shooting incidents.
+
+
+## Potential Biases:
+1. Data may reflect reporting bias if shootings are inconsistently logged across precincts.
+2. Increased policing could deter shootings in heavily patrolled areas, skewing data.
+3. Seasonality affects data due to weather/daylight changes.
+4. Pandemic behaviors likely impacted 2020 data relative to prior years.
+5. Race categories do not capture diversity within groups.
+6. Models quantify associations but do not prove causation.
